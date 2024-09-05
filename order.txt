@@ -1,0 +1,176 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Order;
+use App\Models\OrderDetail;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Session;
+use Razorpay\Api\Api;
+
+class OrderController extends Controller
+{
+
+
+    /**
+     * Get Order List
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function getOrder(Request $request): JsonResponse
+    {
+        $data = Order::where('orders.is_removed', 0)->select('orders.*')->with(['orderDetails']);
+        $data->join('order_details as u', 'u.order_id', '=', 'orders.id');
+        if ($request->get('search')) {
+            $data->where('order_code', 'LIKE', "%{$request->get('search')}%");
+            $data->orWhere('total', 'LIKE', "%{$request->get('search')}%");
+            $data->orWhere('cus_name', 'LIKE', "%{$request->get('search')}%");
+            $data->orWhere('cus_mobile', 'LIKE', "%{$request->get('search')}%");
+            $data->orWhere('payment_id', 'LIKE', "%{$request->get('search')}%");
+        }
+        if ($request->get('date') && $request->get('date') != '') {
+            $date = date('Y-m-d', strtotime($request->get('date')));
+            $data->whereDate('orders.created_at', '=', $date);
+        }
+        if ($request->get('proId') && $request->get('proId') != null) {
+            $data->where('product_id', $request->get('proId'));
+        }
+        if ($request->get('name') != '' && $request->get('dir')) {
+            $data->orderBy($request->get('name'), $request->get('dir'));
+        } else {
+            $data->orderBy('created_at', 'desc');
+        }
+        $total = $data->count();
+        if ($request->pageSize) {
+            $data->skip($request->start)->take($request->pageSize);
+        }
+        $data = $data->get()->toArray();
+        if ($total == 0) {
+            return response()->json(['message' => 'No Orders Found', 'status' => false]);
+        }
+        return response()->json(['total' => $total, 'data' => $data, 'status' => true]);
+    }
+
+    public function create()
+    {
+        return view('razorpay');
+    }
+
+    /**
+     * Store a newly created resource in storage.
+     *
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function store(Request $request): JsonResponse
+    {
+        $data = $request->all();
+//        $user = auth()->user();
+
+        if ($request->has('cus_name') && $request->has('cus_mobile') && $request->has('email') && $request->has('vehicleNumber') && $request->has('aadhaarCardFront') && $request->has('aadhaarCardBack') && $request->has('rcBookFront') && $request->has('rcBookBack') && $request->get('cus_name') && $request->get('cus_mobile') && $request->get('email') && $request->get('vehicleNumber') && $request->get('aadhaarCardFront') && $request->get('aadhaarCardBack') && $request->get('rcBookFront') && $request->get('rcBookBack')) {
+            $api = new Api(env('RAZOR_KEY'), env('RAZOR_SECRET'));
+            $payment = $api->payment->fetch($data['payment_id']);
+            $paymentResponse = $api->payment->fetch($data['payment_id'])->capture(array('amount' => $payment['amount']));
+            if ($paymentResponse) {
+                $last_order = Order::orderBy('created_at', 'desc')->first();
+                if ($last_order) {
+                    $data1 = $request->all();
+//            $userData['user_id'] = $user->getAuthIdentifier();
+                    $tempNo = (int)str_replace('OD', '', $last_order->order_code) + 1;
+                    $no = '';
+                    for ($i = 8; $i >= strlen($tempNo); $i--) {
+                        $no .= '0';
+                    }
+                    $data1['order_code'] = 'OD' . $no . $tempNo;
+                } else {
+                    $data1['order_code'] = 'OD000000001';
+                }
+                $oDetail = OrderDetail::create([
+                    'cus_name' => $request->cus_name,
+                    'cus_mobile' => $request->cus_mobile,
+                    'email' => $request->email,
+                    'vehicleNumber' => $request->vehicleNumber,
+                    'product_id' => '1',
+                    'aadhaarCardFront' => $request->aadhaarCardFront,
+                    'aadhaarCardBack' => $request->aadhaarCardBack,
+                    'rcBookFront' => $request->rcBookFront,
+                    'rcBookBack' => $request->rcBookFront,
+                    'tagIssuanceFee' => 10,
+                    'gstTagIssuanceFee' => 10,
+                    'fasTagBalance' => 10,
+                ])->id;
+                unset($request->cus_name, $request->cus_mobile, $request->email, $request->vehicleNumber, $data->order_id,
+                    $request->product_id, $request->aadhaarCardFront, $request->aadhaarCardBack, $request->rcBookFront);
+                Order::create([
+                    'order_details_id' => '1',
+                    'order_code' => $data1['order_code'],
+                    'total' => 30,
+                    'payment_id' => $request->payment_id
+                ]);
+                $response = array(
+                    'status' => true,
+                    'message' => 'Order Book Successfully'
+                );
+                return response()->json($response);
+            } else {
+                $response = array(
+                    'status' => false,
+                    'message' => 'Something Went Wrong in Payment'
+                );
+                return response()->json($response);
+            }
+        } else {
+            $response = array(
+                'status' => false,
+                'message' => 'Something Went Wrong'
+            );
+            return response()->json($response);
+        }
+    }
+
+    /**
+     * @param $id
+     * @return JsonResponse
+     */
+    public
+    function show($id): JsonResponse
+    {
+        $order = Order::where('id', $id)->with('orderDetails')->first();
+        if ($order) {
+            $response = array(
+                'status' => true,
+                'data' => $order
+            );
+            $code = 200;
+        } else {
+            $response = array(
+                'status' => false,
+                'message' => 'Order not found'
+            );
+            $code = 500;
+        }
+        return response()->json($response, $code);
+    }
+}
+
+//        return response()->json($response);
+//          $input = $request->all();
+//
+//        $api = new Api(env('RAZOR_KEY'), env('RAZOR_SECRET'));
+//
+//        $payment = $api->payment->fetch($input['razorpay_payment_id']);
+//
+//        if(count($input)  && !empty($input['razorpay_payment_id'])) {
+//            try {
+//                $response = $api->payment->fetch($input['razorpay_payment_id'])->capture(array('amount'=>$payment['amount']));
+//
+//            } catch (\Exception $e) {
+//                return  $e->getMessage();
+//                Session::put('error',$e->getMessage());
+//                return redirect()->back();
+//            }
+//        }
+//
+//        Session::put('success', 'Payment successful');
+//        return redirect()->back();
